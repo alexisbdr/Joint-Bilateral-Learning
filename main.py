@@ -8,7 +8,7 @@ from torchvision.utils import save_image,make_grid
 import os
 import sys
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0,1,2,3"
 
 def sample_image(vgg, model,batch,epoch,output_file):
     cont_img,low_cont,style_img,low_style = batch
@@ -17,6 +17,7 @@ def sample_image(vgg, model,batch,epoch,output_file):
     cont_feat = vgg.encode_with_intermediate(low_cont)
     style_feat = vgg.encode_with_intermediate(low_style)
     coeffs, output = model(cont_img, cont_feat, style_feat)
+    print(output.shape)
 
     cont = make_grid(cont_img, nrow=batch_size, normalize=True)
     style = make_grid(style_img, nrow=batch_size, normalize=True)
@@ -32,13 +33,16 @@ def train(args):
     style_img_path = args.style_img_path
     batch_size = args.batch_size
     vgg_checkpoint = args.vgg_checkpoint
+    pre_checkpoint = args.pre_checkpoint
     output_file = args.output_file
     log_interval = args.log_interval
     ckpt_interval = args.ckpt_interval
+    device = args.cuda_dev
     # set dataset
-    device = torch.device("cuda")
-    train_dataset = JBLDataset(cont_img_path, style_img_path, img_size=512)
+    device = torch.device(f"cuda:{device}")
+    train_dataset = DualCamDataset(cont_img_path, style_img_path, img_size=512)
     train_loader = DataLoader(train_dataset, batch_size=batch_size)
+    print(f"train dataset length: {len(train_dataset)}")
 
     # initialize model and optimizer
     vgg = VGG.vgg
@@ -47,14 +51,20 @@ def train(args):
     net = VGG.Net(vgg).to(device)
 
     model = Model().to(device)
+    if pre_checkpoint != "":
+        model.load_state_dict(torch.load(pre_checkpoint))
     optimizer = Adam(model.parameters(), lr=1e-4)
-    L_loss = LaplacianRegularizer3D()
-    epochs = 100
+    L_loss = LaplacianRegularizer()
+    epochs = 400
     batch_done = 0
     # training iteration
     for e in range(epochs):
         model.train()
         for i ,(low_cont, cont_img,style_img,low_style) in enumerate(train_loader):
+
+            #print(f"low_cont shape: {low_cont.shape}, low_cont max: {low_cont.max()}, low_cont min: {low_cont.min()}") 
+            #print(f"cont_img shape: {cont_img.shape}, cont_img max: {cont_img.max()}, cont_img min: {cont_img.min()}")
+            
             optimizer.zero_grad()
 
             cont_img = cont_img.to(device)
@@ -92,6 +102,7 @@ def train(args):
             if (batch_done+1) % log_interval == 0:
                 batch = [cont_img,low_cont,style_img,low_style]
                 sample_image(net, model, batch, e,output_file)
+                sys.stdout.write("\n")
 
             if (batch_done + 1) % ckpt_interval == 0:
                 model.eval().cpu()
@@ -109,10 +120,12 @@ if __name__ == '__main__':
     parser.add_argument('--cont_img_path', type=str, default="./data/content", help='path to content images')
     parser.add_argument('--style_img_path', type=str, default="./data/style", help='path to style images')
     parser.add_argument('--vgg_checkpoint', type=str, default="./checkpoints/vgg_normalised.pth", help='path to style images')
+    parser.add_argument('--pre_checkpoint', type=str, default="", help='checkpoint fro previous training')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--output_file', type=str, default='./output/')
-    parser.add_argument('--log_interval', type=int, default=600)
-    parser.add_argument('--ckpt_interval', type=int, default=600)
+    parser.add_argument('--log_interval', type=int, default=40)
+    parser.add_argument('--ckpt_interval', type=int, default=40)
+    parser.add_argument('--cuda_dev', type=int, default=0)
 
     params = parser.parse_args()
 

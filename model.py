@@ -2,9 +2,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
+
 def resize(image, size):
     image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
     return image
+
 def calc_mean_std(feat, eps=1e-5):
     # eps is a small value added to the variance to avoid divide-by-zero.
     size = feat.size()
@@ -45,8 +47,11 @@ class Biliteral_Grid(nn.Module):
         self.G4 = nn.Linear(256,128)
         self.G5 = nn.Linear(128,64)
         self.G6 = nn.Linear(64,64)
-        self.F = ConvLayer(128, 64, 1, 1)
-        self.T = ConvLayer(64, 96, 3, 1)
+        
+        #self.F = ConvLayer(128, 64, 1, 1)
+        #self.T = ConvLayer(64, 96, 3, 1)
+        self.F = nn.Sequential(ConvLayer(128, 96, 1, 1), ConvLayer(96, 96, 1, 1))
+
         return
 
     def forward(self,c,s,feat):
@@ -72,10 +77,11 @@ class Biliteral_Grid(nn.Module):
 
         G = G.reshape(G.shape+(1,1)).expand(G.shape+(16,16))
         f = torch.cat((L,G),dim=1)
-        f = F.relu(self.F(f))
-        f = self.T(f)
+        #f = F.relu(self.F(f))
+        f = self.F(f)
         # this is grid
         return f
+
 #########################################################################################################
 class Model(nn.Module):
     def __init__(self):
@@ -86,6 +92,7 @@ class Model(nn.Module):
         self.apply_coeffs = ApplyCoeffs()
 
     def forward(self,cont,cont_feat,style_feat):
+        
         feat = []
         for i in range(1,len(cont_feat)):
             feat.append(adaptive_instance_normalization(cont_feat[i],style_feat[i]))
@@ -98,17 +105,18 @@ class Model(nn.Module):
         # out -= out.min().detach()
         # out /= out.max().detach()
         return coeffs_out,out
+
 ########################################################################################################
 class ConvLayer(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride):
         super(ConvLayer, self).__init__()
         reflection_padding = kernel_size // 2 # same dimension after padding
-        self.reflection_pad = nn.ReflectionPad2d(reflection_padding)
-        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride) # remember this dimension
+        #self.reflection_pad = nn.ReflectionPad2d(reflection_padding)
+        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=reflection_padding) # remember this dimension
 
     def forward(self, x):
-        out = self.reflection_pad(x)
-        out = self.conv2d(out)
+        #out = self.reflection_pad(x)
+        out = self.conv2d(x)
         return out
 
 class SplattingBlock(nn.Module):
@@ -128,7 +136,7 @@ class SplattingBlock(nn.Module):
         c = F.relu(self.conv2(c))
         return c,s
 
-class LaplacianRegularizer2D(nn.Module):
+class LaplacianRegularizer(nn.Module):
     def __init__(self):
         super(LaplacianRegularizer, self).__init__()
         self.mse_loss = torch.nn.MSELoss(reduction='sum')
@@ -201,11 +209,13 @@ class Slice(nn.Module):
         if device >= 0:
             hg = hg.to(device)
             wg = wg.to(device)
-        hg = hg.float().repeat(N, 1, 1).unsqueeze(3) / (H-1) * 2 - 1 # norm to [-1,1] NxHxWx1
-        wg = wg.float().repeat(N, 1, 1).unsqueeze(3) / (W-1) * 2 - 1 # norm to [-1,1] NxHxWx1
+        #hg = hg.float().repeat(N, 1, 1).unsqueeze(3) / (H-1) * 2 - 1 # norm to [-1,1] NxHxWx1
+        #wg = wg.float().repeat(N, 1, 1).unsqueeze(3) / (W-1) * 2 - 1 # norm to [-1,1] NxHxWx1
+        hg = hg.type_as(bilateral_grid).repeat(N, 1, 1).unsqueeze(3) / (H-1) * 2 - 1 # norm to [-1,1] NxHxWx1
+        wg = wg.type_as(bilateral_grid).repeat(N, 1, 1).unsqueeze(3) / (W-1) * 2 - 1 # norm to [-1,1] NxHxWx1
         guidemap = guidemap.permute(0,2,3,1).contiguous()
         guidemap_guide = torch.cat([wg, hg, guidemap], dim=3).unsqueeze(1) # Nx1xHxWx3
-        coeff = F.grid_sample(bilateral_grid, guidemap_guide)
+        coeff = F.grid_sample(bilateral_grid, guidemap_guide, align_corners=True)
         return coeff.squeeze(2)
 
 class ApplyCoeffs(nn.Module):

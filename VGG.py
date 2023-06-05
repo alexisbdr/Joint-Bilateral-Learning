@@ -1,6 +1,7 @@
 import torch.nn as nn
 from model import calc_mean_std,adaptive_instance_normalization
 import torch
+
 decoder = nn.Sequential(
     nn.ReflectionPad2d((1, 1, 1, 1)),
     nn.Conv2d(512, 256, (3, 3)),
@@ -141,7 +142,7 @@ class Net(nn.Module):
 
         loss_c = self.calc_content_loss(out_feats[-1], content_feat)
         loss_s = self.calc_style_loss(out_feats[0], style_feats[0])
-        for i in range(0, 4):
+        for i in range(1, 4):
             loss_s += self.calc_style_loss(out_feats[i], style_feats[i])
         return loss_c, loss_s
 
